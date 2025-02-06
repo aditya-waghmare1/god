@@ -1,61 +1,58 @@
 const express = require('express');
 const multer = require('multer');
-const fs = require('fs');
-const path = require('path');  // Import path to handle file paths
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
+// ✅ Ensure API Key is loaded
+if (!process.env.API_KEY) {
+  throw new Error("API_KEY is missing. Add it to your environment variables.");
+}
+
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 
-// Set up multer for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/');
-  },
-  filename: function (req, file, cb) {
-    cb(null, file.originalname);
-  },
-});
+// ✅ Use memory storage (works on Vercel)
+const upload = multer({ storage: multer.memoryStorage() });
 
-const upload = multer({ storage: storage });
-
-function fileToGenerativePart(path, mimeType) {
+function fileToGenerativePart(buffer, mimeType) {
   return {
     inlineData: {
-      data: Buffer.from(fs.readFileSync(path)).toString('base64'),
+      data: buffer.toString("base64"),
       mimeType,
     },
   };
 }
 
-// Serve the index.html file
+// ✅ Serve index.html (for frontend)
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(__dirname + '/index.html');
 });
 
+// ✅ Image description API
 app.post('/describe', upload.single('image'), async (req, res) => {
   try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image uploaded' });
+    }
+
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const prompt = 'Describe the provided image';
-
-    const imagePart = fileToGenerativePart(req.file.path, req.file.mimetype);
+    const imagePart = fileToGenerativePart(req.file.buffer, req.file.mimetype);
 
     const result = await model.generateContent([prompt, imagePart]);
     const response = await result.response;
-    const text = response.text();
+    
+    res.json({ description: response.text() });
 
-    // Delete the uploaded image after processing
-    fs.unlinkSync(req.file.path);
-
-    res.json({ description: text });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error:", error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
+// ✅ Start the server (for local testing)
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
